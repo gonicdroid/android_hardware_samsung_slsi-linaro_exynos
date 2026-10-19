@@ -49,6 +49,112 @@
 #include "legacy/alloc_device.h"
 #endif
 
+#include "mali_gralloc_bufferallocation.h"
+#include "mali_gralloc_bufferdescriptor.h"
+#include "mali_gralloc_ion.h"
+
+#ifndef GRALLOC_HARDWARE_GPU0
+#define GRALLOC_HARDWARE_GPU0 "gpu0"
+#endif
+
+typedef struct alloc_device_t {
+    struct hw_device_t common;
+    int (*alloc)(struct alloc_device_t* dev,
+            int w, int h, int format, int usage,
+            buffer_handle_t* handle, int* stride);
+
+    int (*free)(struct alloc_device_t* dev,
+            buffer_handle_t handle);
+
+    void (*dump)(struct alloc_device_t* dev, char *buff, int buff_len);
+
+    void* reserved_proc[7];
+} alloc_device_t;
+
+static int mali_gralloc_alloc(alloc_device_t *dev,
+                              int w, int h, int format, int usage,
+                              buffer_handle_t *pHandle, int *pStride)
+{
+    if (!dev || !pHandle || !pStride || w <= 0 || h <= 0)
+    {
+        return -EINVAL;
+    }
+
+    buffer_descriptor_t buf_desc;
+    memset(&buf_desc, 0, sizeof(buf_desc));
+    buf_desc.signature = sizeof(buf_desc);
+    buf_desc.width = w;
+    buf_desc.height = h;
+    buf_desc.producer_usage = (uint64_t)(uint32_t)usage;
+    buf_desc.consumer_usage = (uint64_t)(uint32_t)usage;
+    buf_desc.hal_format = (uint64_t)(uint32_t)format;
+    buf_desc.layer_count = 1;
+    buf_desc.fd_count = 1;
+    buf_desc.format_type = MALI_GRALLOC_FORMAT_TYPE_USAGE;
+
+    gralloc_buffer_descriptor_t descriptors[1];
+    descriptors[0] = (gralloc_buffer_descriptor_t)(&buf_desc);
+
+    mali_gralloc_module *m = reinterpret_cast<mali_gralloc_module *>(dev->common.module);
+    bool shared = false;
+
+    if (mali_gralloc_buffer_allocate(m, descriptors, 1, pHandle, &shared) < 0)
+    {
+        ALOGE("mali_gralloc_alloc: Failed to allocate buffer (%dx%d fmt=0x%x usage=0x%x)",
+              w, h, format, usage);
+        return -ENOMEM;
+    }
+
+    int stride = 0;
+    mali_gralloc_query_getstride(*pHandle, &stride);
+    *pStride = stride;
+
+    return 0;
+}
+
+static int mali_gralloc_free(alloc_device_t *dev, buffer_handle_t handle)
+{
+    GRALLOC_UNUSED(dev);
+    return mali_gralloc_buffer_free(handle);
+}
+
+static int mali_gralloc_alloc_close(struct hw_device_t *device)
+{
+    alloc_device_t *dev = reinterpret_cast<alloc_device_t *>(device);
+    if (dev)
+    {
+        delete dev;
+    }
+    return 0;
+}
+
+static int alloc_device_open(const hw_module_t *module, const char *name, hw_device_t **device)
+{
+    GRALLOC_UNUSED(name);
+    alloc_device_t *dev = new alloc_device_t;
+    if (!dev)
+    {
+        return -ENOMEM;
+    }
+
+    memset(dev, 0, sizeof(*dev));
+    dev->common.tag = HARDWARE_DEVICE_TAG;
+    dev->common.version = 0;
+    dev->common.module = const_cast<hw_module_t *>(module);
+    dev->common.close = mali_gralloc_alloc_close;
+    dev->alloc = mali_gralloc_alloc;
+    dev->free = mali_gralloc_free;
+
+    private_module_t *p = reinterpret_cast<private_module_t *>(dev->common.module);
+    if (p->ionfd == -1)
+    {
+        p->ionfd = mali_gralloc_ion_open();
+    }
+
+    *device = &dev->common;
+    return 0;
+}
+
 static int mali_gralloc_module_device_open(const hw_module_t *module, const char *name,
                                            hw_device_t **device)
 {
@@ -59,6 +165,10 @@ static int mali_gralloc_module_device_open(const hw_module_t *module, const char
 	if (!strncmp(name, GRALLOC_HARDWARE_MODULE_ID, MALI_GRALLOC_HARDWARE_MAX_STR_LEN))
 	{
 		status = mali_gralloc_device_open(module, name, device);
+	}
+	else if (!strncmp(name, GRALLOC_HARDWARE_GPU0, MALI_GRALLOC_HARDWARE_MAX_STR_LEN))
+	{
+		status = alloc_device_open(module, name, device);
 	}
 
 #else

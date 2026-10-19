@@ -69,7 +69,7 @@ LOCAL_C_INCLUDES := \
 LOCAL_SRC_FILES := 	\
 	GrallocWrapper.cpp
 
-ifeq ($(BOARD_USES_VENDORIMAGE), true)
+ifneq ($(TARGET_COPY_OUT_VENDOR),)
 LOCAL_PROPRIETARY_MODULE := true
 endif
 LOCAL_MODULE := libGrallocWrapper

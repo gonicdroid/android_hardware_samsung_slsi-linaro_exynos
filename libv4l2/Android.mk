@@ -35,7 +35,7 @@ LOCAL_MODULE_TAGS := optional
 LOCAL_PROPRIETARY_MODULE := true
 LOCAL_CFLAGS += -Wno-unused-parameter -Wno-unused-function
 
-ifeq ($(BOARD_USES_VENDORIMAGE), true)
+ifneq ($(TARGET_COPY_OUT_VENDOR),)
 LOCAL_PROPRIETARY_MODULE := true
 endif
 
